@@ -1,0 +1,142 @@
+@import "tailwindcss";
+
+@theme {
+  /* Forest green: the brand */
+  --color-brand-50: #effaf3;
+  --color-brand-100: #d8f3e2;
+  --color-brand-200: #b3e6c8;
+  --color-brand-300: #7fd1a5;
+  --color-brand-400: #48b47c;
+  --color-brand-500: #23975f;
+  --color-brand-600: #157a4a;
+  --color-brand-700: #12623d;
+  --color-brand-800: #114e33;
+  --color-brand-900: #0f402b;
+  --color-brand-950: #062418;
+
+  /* Saffron: warm accent for highlights, offers and badges */
+  --color-saffron-50: #fff8eb;
+  --color-saffron-100: #ffebc6;
+  --color-saffron-200: #ffd488;
+  --color-saffron-300: #ffb84a;
+  --color-saffron-400: #ff9f20;
+  --color-saffron-500: #f97d07;
+  --color-saffron-600: #dd5902;
+  --color-saffron-700: #b73b06;
+
+  /* Warm neutrals (replace Tailwind's cool slate everywhere) */
+  --color-slate-50: #fafaf7;
+  --color-slate-100: #f3f2ee;
+  --color-slate-200: #e7e5df;
+  --color-slate-300: #d5d2ca;
+  --color-slate-400: #a8a49a;
+  --color-slate-500: #78746b;
+  --color-slate-600: #5b5850;
+  --color-slate-700: #44413b;
+  --color-slate-800: #2b2925;
+  --color-slate-900: #1b1a17;
+  --color-slate-950: #0f0e0c;
+
+  --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-display: var(--font-fraunces), ui-serif, Georgia, serif;
+
+  --shadow-xs: 0 1px 2px rgb(27 26 23 / 0.05);
+  --shadow-sm: 0 1px 2px rgb(27 26 23 / 0.04), 0 1px 3px rgb(27 26 23 / 0.06);
+  --shadow-md: 0 2px 4px -1px rgb(27 26 23 / 0.05), 0 6px 16px -4px rgb(27 26 23 / 0.08);
+  --shadow-lg: 0 4px 8px -2px rgb(27 26 23 / 0.05), 0 16px 32px -8px rgb(27 26 23 / 0.14);
+  --shadow-xl: 0 8px 16px -4px rgb(27 26 23 / 0.06), 0 28px 56px -12px rgb(27 26 23 / 0.22);
+
+  --animate-fade-in: fade-in 0.25s ease-out both;
+  --animate-rise: rise 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-pop: pop 0.2s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-flash: flash 2s ease-out;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes pop {
+  from { opacity: 0; transform: scale(0.96) translateY(6px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes flash {
+  from { background-color: var(--color-brand-100); }
+  to { background-color: transparent; }
+}
+@keyframes shimmer {
+  from { background-position: -400px 0; }
+  to { background-position: 400px 0; }
+}
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  background: var(--color-slate-50);
+  color: var(--color-slate-900);
+  font-feature-settings: "cv11", "ss01";
+}
+
+::selection {
+  background: var(--color-brand-200);
+  color: var(--color-brand-950);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-brand-500);
+  outline-offset: 2px;
+}
+
+.font-display {
+  font-variation-settings: "SOFT" 50, "opsz" 72;
+  letter-spacing: -0.02em;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Leaflet */
+.leaflet-container {
+  font: inherit;
+  border-radius: 1rem;
+}
+.leaflet-tooltip,
+.leaflet-popup-content-wrapper {
+  border-radius: 0.75rem;
+  box-shadow: var(--shadow-lg);
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: var(--color-slate-300);
+  border-radius: 9999px;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  scrollbar-width: none;
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--color-slate-100) 0%, var(--color-slate-200) 40%, var(--color-slate-100) 80%);
+  background-size: 800px 100%;
+  animation: var(--animate-shimmer);
+}
+
+/* Subtle paper grain. Use on its own absolutely-positioned overlay - it sets background-image. */
+.grain {
+  background-image: radial-gradient(rgb(255 255 255 / 0.06) 1px, transparent 1px);
+  background-size: 3px 3px;
+}
