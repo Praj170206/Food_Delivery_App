@@ -15,7 +15,7 @@ export const GET = route(async (req) => {
   const here = rider.delivery?.currentLocation?.coordinates as [number, number] | undefined;
 
   if (req.nextUrl.searchParams.get("view") === "current") {
-    const order = await Order.findOne({ deliveryPartner: rider._id, status: { $in: ["confirmed", "preparing", "ready", "picked_up"] } })
+    const order = await Order.findOne({ deliveryPartner: rider._id, status: { $in: ["placed", "confirmed", "preparing", "ready", "picked_up"] } })
       .sort({ assignedAt: -1 })
       .populate(POPULATE)
       .lean();

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { deliveryRadiusKm } from "@/lib/constants";
 import { route, ApiError, escapeRegex } from "@/lib/api";
 import { connectDB } from "@/lib/db";
 import { Restaurant } from "@/models/Restaurant";
@@ -15,7 +16,7 @@ export const GET = route(async (req) => {
   }
   await connectDB();
   const settings = await getSettings();
-  const radiusKm = settings.delivery?.maxDeliveryRadiusKm ?? 10;
+  const radiusKm = deliveryRadiusKm(settings.delivery?.maxDeliveryRadiusKm); // capped at 50 km
 
   const query: Record<string, unknown> = { status: "approved" };
   const q = sp.get("q")?.trim();

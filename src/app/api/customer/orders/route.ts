@@ -79,15 +79,26 @@ export const POST = route(async (req) => {
   order.deliveryOtpHash = hashOtp(order._id, otp);
   order.deliveryOtpEnc = encryptOtp(otp);
 
-  try {
-    await order.save();
-  } catch (err) {
-    // Lost a race with an identical request (same clientRequestId).
-    if ((err as { code?: number }).code === 11000) {
-      const dup = await Order.findOne({ user: user._id, clientRequestId: body.clientRequestId }).select("_id orderNumber");
-      if (dup) return NextResponse.json({ orderId: dup._id, orderNumber: dup.orderNumber, duplicate: true });
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await order.save();
+      break;
+    } catch (err) {
+      const e = err as { code?: number; keyPattern?: Record<string, unknown> };
+      if (e.code !== 11000) throw err;
+      // Random order number collided with an existing one: pick another and retry.
+      if (e.keyPattern?.orderNumber && attempt < 3) {
+        order.orderNumber = generateOrderNumber();
+        continue;
+      }
+      // Lost a race with an identical request (same clientRequestId).
+      const dup = await Order.findOne({ user: user._id, clientRequestId: body.clientRequestId }).select("_id orderNumber status");
+      if (dup) {
+        const checkout = dup.status === "payment_pending" ? await razorpayCheckoutFor(dup._id, user) : null;
+        return NextResponse.json({ orderId: dup._id, orderNumber: dup.orderNumber, duplicate: true, razorpay: checkout });
+      }
+      throw err;
     }
-    throw err;
   }
 
   if (online) {
@@ -97,6 +108,9 @@ export const POST = route(async (req) => {
     } catch (err) {
       order.status = "cancelled";
       order.cancellation = { reason: "Couldn't start the online payment", byRole: "system", at: new Date() };
+      // Free the request id: the checkout page retries (or switches to COD) with the same one,
+      // and must get a fresh order - not this cancelled one back as a "duplicate".
+      order.clientRequestId = undefined;
       await order.save();
       throw new ApiError(502, `Couldn't start the online payment: ${(err as Error).message}. Please try again or choose Cash on Delivery.`);
     }

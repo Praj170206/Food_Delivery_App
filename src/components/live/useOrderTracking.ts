@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { portalForPath } from "@/lib/constants";
+import { visibleEventSource } from "@/components/live/visibleEventSource";
 
 export type LiveTracking = {
   location: [number, number] | null; // [lng, lat]
@@ -21,38 +22,25 @@ export function useOrderTracking(orderId: string | null, active: boolean, onStat
 
   useEffect(() => {
     if (!orderId || !active) return;
-    let es: EventSource | null = null;
-    let retry: ReturnType<typeof setTimeout> | null = null;
-    let attempts = 0;
     let lastStatus: string | null = null;
-
-    const connect = () => {
-      es = new EventSource(`/api/track/${orderId}?portal=${portalForPath(window.location.pathname)}`);
-      es.addEventListener("mode", () => {
-        attempts = 0;
-        setState((s) => ({ ...s, connected: true }));
-      });
-      es.addEventListener("location", (e) => {
-        const d = JSON.parse((e as MessageEvent).data);
-        setState((s) => ({ ...s, location: d.location, lastLocationAt: d.lastLocationAt }));
-      });
-      es.addEventListener("order", (e) => {
-        const d = JSON.parse((e as MessageEvent).data);
-        setState((s) => ({ ...s, status: d.status, ...(d.riderId ? {} : { location: null }) }));
-        if (lastStatus !== null && lastStatus !== `${d.status}:${d.riderId}`) onStatusRef.current?.();
-        lastStatus = `${d.status}:${d.riderId}`;
-      });
-      es.onerror = () => {
-        es?.close();
-        setState((s) => ({ ...s, connected: false }));
-        retry = setTimeout(connect, Math.min(15000, 1000 * 2 ** attempts++));
-      };
-    };
-    connect();
-    return () => {
-      es?.close();
-      if (retry) clearTimeout(retry);
-    };
+    return visibleEventSource(
+      `/api/track/${orderId}?portal=${portalForPath(window.location.pathname)}`,
+      (es) => {
+        es.addEventListener("mode", () => setState((s) => ({ ...s, connected: true })));
+        es.addEventListener("location", (e) => {
+          const d = JSON.parse((e as MessageEvent).data);
+          setState((s) => ({ ...s, location: d.location, lastLocationAt: d.lastLocationAt }));
+        });
+        es.addEventListener("order", (e) => {
+          const d = JSON.parse((e as MessageEvent).data);
+          setState((s) => ({ ...s, status: d.status, ...(d.riderId ? {} : { location: null }) }));
+          // Also fires after a reconnect if something changed while the tab was in the background.
+          if (lastStatus !== null && lastStatus !== `${d.status}:${d.riderId}`) onStatusRef.current?.();
+          lastStatus = `${d.status}:${d.riderId}`;
+        });
+      },
+      { onDown: () => setState((s) => ({ ...s, connected: false })) }
+    );
   }, [orderId, active]);
 
   return state;

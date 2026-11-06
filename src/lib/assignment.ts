@@ -2,14 +2,14 @@ import "server-only";
 import type { NextRequest } from "next/server";
 import type { HydratedDocument } from "mongoose";
 import { Order, type OrderFields } from "@/models/Order";
-import { User, type UserDoc } from "@/models/User";
+import { User } from "@/models/User";
 import { haversineKm } from "@/lib/geo";
 import { Restaurant } from "@/models/Restaurant";
 import { getSettings } from "@/models/Setting";
 import { logActivity } from "@/lib/audit";
 import { orderAudience } from "@/lib/auth/access";
 import { sendMail, mailTemplates } from "@/lib/mail";
-import { findNearbyPartners, reservePartner, timelineEntry, type PartnerCandidate } from "@/lib/orders";
+import { expireStaleRiders, findNearbyPartners, releasePartner, reservePartner, timelineEntry, type PartnerCandidate } from "@/lib/orders";
 import type { Role } from "@/lib/constants";
 
 type Actor = { _id: unknown; name: string; role: Role } | null;
@@ -50,32 +50,16 @@ export async function tryAutoAssign(order: OrderDoc, actor: Actor, req?: NextReq
   );
 
   for (const c of candidates) {
-    if (!(await reservePartner(c._id, order._id))) continue; // grabbed by another order in the meantime
-    order.deliveryPartner = c._id;
-    order.assignedAt = new Date();
-    order.timeline.push(timelineEntry("partner_assigned", actor, `Auto-assigned to ${c.name} (${c.distanceKm} km from hotel)`));
-    await order.save();
-
-    await logActivity({
-      actor,
-      action: "order.partner_assigned",
-      message: `Order ${order.orderNumber} auto-assigned to ${c.name} (${c.distanceKm} km from ${restaurant.name})`,
-      entityType: "order",
-      entityId: order._id,
-      meta: { partnerId: c._id, distanceKm: c.distanceKm },
-      notify: await orderAudience(order),
-      req,
-    });
-    await notifyAssignment(order, c._id);
-    return c;
+    const claimed = await claimOrder(order, c, c.distanceKm, restaurant.name, { how: "auto", actor, statuses: ASSIGNABLE }, req);
+    if (claimed) return c;
   }
   return null;
 }
 
 const OPEN_FOR_RIDERS = ["confirmed", "preparing", "ready"];
+// An admin may also hand a rider an order the hotel hasn't accepted yet.
+const ASSIGNABLE = ["placed", ...OPEN_FOR_RIDERS];
 const unassigned = { $or: [{ deliveryPartner: null }, { deliveryPartner: { $exists: false } }] };
-
-type RiderDoc = UserDoc;
 
 async function loadFreeRider(riderId: unknown) {
   const rider = await User.findById(riderId).select("name delivery status role");
@@ -86,32 +70,46 @@ async function loadFreeRider(riderId: unknown) {
 
 /**
  * Atomically gives one unassigned order to one free rider. Both sides are guarded, so two riders
- * accepting the same order (or one rider grabbing two orders) can never both succeed.
+ * accepting the same order (or one rider grabbing two orders, or auto-assign racing a rider's
+ * Accept) can never both succeed. Returns the updated order, or null if it was taken.
  */
-async function claimOrder(order: OrderDoc, rider: RiderDoc, km: number, hotelName: string, how: "auto" | "accepted", req?: NextRequest) {
-  const claimed = await Order.updateOne({ _id: order._id, status: { $in: OPEN_FOR_RIDERS }, ...unassigned }, { $set: { deliveryPartner: rider._id, assignedAt: new Date() } });
-  if (claimed.modifiedCount !== 1) return false;
-  if (!(await reservePartner(rider._id, order._id))) {
-    await Order.updateOne({ _id: order._id, deliveryPartner: rider._id }, { $unset: { deliveryPartner: 1, assignedAt: 1 } });
-    return false;
+async function claimOrder(
+  order: OrderDoc,
+  rider: { _id: unknown; name: string },
+  km: number,
+  hotelName: string,
+  opts: { how: "auto" | "accepted"; actor?: Actor; statuses?: string[] },
+  req?: NextRequest
+) {
+  // Rider first: only a free rider can be reserved, and only for one order at a time.
+  if (!(await reservePartner(rider._id as string, order._id))) return null;
+  const actor = opts.how === "auto" ? (opts.actor ?? null) : (rider as Actor);
+  const note = opts.how === "auto" ? `Auto-assigned to ${rider.name} (${km} km from hotel)` : `Accepted by ${rider.name} (${km} km from hotel)`;
+  const updated = await Order.findOneAndUpdate(
+    { _id: order._id, status: { $in: opts.statuses ?? OPEN_FOR_RIDERS }, ...unassigned },
+    {
+      $set: { deliveryPartner: rider._id, assignedAt: new Date() },
+      $push: { timeline: timelineEntry("partner_assigned", actor, note) },
+      $inc: { __v: 1 },
+    },
+    { new: true }
+  );
+  if (!updated) {
+    await releasePartner(rider._id as string); // someone else got the order: free the rider again
+    return null;
   }
-  const note = how === "auto" ? `Auto-assigned to ${rider.name} (${km} km from hotel)` : `Accepted by ${rider.name} (${km} km from hotel)`;
-  order.deliveryPartner = rider._id;
-  order.assignedAt = new Date();
-  order.timeline.push(timelineEntry("partner_assigned", how === "auto" ? null : rider, note));
-  await order.save();
   await logActivity({
-    actor: how === "auto" ? null : rider,
+    actor,
     action: "order.partner_assigned",
-    message: `Order ${order.orderNumber} ${how === "auto" ? "auto-assigned to" : "accepted by"} ${rider.name} (${km} km from ${hotelName})`,
+    message: `Order ${updated.orderNumber} ${opts.how === "auto" ? "auto-assigned to" : "accepted by"} ${rider.name} (${km} km from ${hotelName})`,
     entityType: "order",
-    entityId: order._id,
-    meta: { partnerId: rider._id, distanceKm: km, how },
-    notify: await orderAudience(order),
+    entityId: updated._id,
+    meta: { partnerId: rider._id, distanceKm: km, how: opts.how },
+    notify: await orderAudience(updated),
     req,
   });
-  await notifyAssignment(order, rider._id);
-  return true;
+  await notifyAssignment(updated, rider._id);
+  return updated;
 }
 
 export type OpenOrder = {
@@ -183,8 +181,8 @@ export async function acceptOrder(riderId: unknown, orderId: string, req?: NextR
   const km = hotel?.location?.coordinates ? Math.round(haversineKm(free.coords, hotel.location.coordinates as [number, number]) * 10) / 10 : Infinity;
   if (km > radiusKm) return { ok: false as const, error: `This hotel is ${km} km away - you can accept orders within ${radiusKm} km` };
 
-  const ok = await claimOrder(order, free.rider, km, hotel?.name ?? "hotel", "accepted", req);
-  return ok ? { ok: true as const, order } : { ok: false as const, error: "Sorry, this order was just taken by another rider" };
+  const claimed = await claimOrder(order, free.rider, km, hotel?.name ?? "hotel", { how: "accepted" }, req);
+  return claimed ? { ok: true as const, order: claimed } : { ok: false as const, error: "Sorry, this order was just taken by another rider" };
 }
 
 /**
@@ -201,9 +199,27 @@ export async function assignWaitingOrderTo(riderId: unknown, req?: NextRequest) 
   const ranked = [...within].sort((a, b) => Number(b.status === "ready") - Number(a.status === "ready") || a.pickupKm - b.pickupKm);
   for (const row of ranked) {
     const order = await Order.findById(row._id);
-    if (order && (await claimOrder(order, free.rider, row.pickupKm, row.hotel.name, "auto", req))) return order;
+    const claimed = order ? await claimOrder(order, free.rider, row.pickupKm, row.hotel.name, { how: "auto" }, req) : null;
+    if (claimed) return claimed;
   }
   return null;
+}
+
+/** Switches off riders whose app went silent, logging it so the admin and the rider's app hear about it live. */
+export async function switchOffStaleRiders(req?: NextRequest) {
+  const stale = await expireStaleRiders();
+  for (const r of stale) {
+    await logActivity({
+      actor: null,
+      action: "delivery.offline",
+      message: `${r.name} was set offline automatically (no GPS for 15 minutes)`,
+      entityType: "user",
+      entityId: r._id,
+      notify: [r._id],
+      req,
+    });
+  }
+  return stale.length;
 }
 
 /**

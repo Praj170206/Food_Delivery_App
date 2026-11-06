@@ -78,7 +78,8 @@ const orderSchema = new Schema(
     timeline: { type: [timelineSchema], default: [] },
     notes: { type: String, maxlength: 300 },
   },
-  { timestamps: true }
+  // Several roles change the same order; a stale read must fail (409) instead of silently overwriting a newer status.
+  { timestamps: true, optimisticConcurrency: true }
 );
 
 orderSchema.index({ createdAt: -1 });

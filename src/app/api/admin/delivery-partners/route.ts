@@ -3,10 +3,12 @@ import { route, escapeRegex } from "@/lib/api";
 import { requireRole } from "@/lib/auth/session";
 import { User } from "@/models/User";
 import { USER_STATUSES } from "@/lib/constants";
+import { switchOffStaleRiders } from "@/lib/assignment";
 
 // Returns every partner (not paginated) because the fleet map plots them all at once.
 export const GET = route(async (req) => {
   await requireRole("admin");
+  await switchOffStaleRiders(req); // don't show riders who closed the app as "online"
   const sp = req.nextUrl.searchParams;
 
   const filter: Record<string, unknown> = { role: "delivery" };

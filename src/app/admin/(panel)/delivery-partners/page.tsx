@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { qs, useApi, useDebounced } from "@/lib/client";
 import { timeAgo } from "@/lib/format";
 import { Badge, Card, EmptyState, ErrorBlock, Input, LoadingBlock, PageHeader, Select, StatCard, Table } from "@/components/ui";
@@ -10,6 +10,7 @@ import { useLiveRefresh } from "@/components/live/LiveProvider";
 import { UserStatusActions } from "@/components/admin/UserStatusActions";
 import { ORDER_STATUS_LABELS, USER_STATUSES, type OrderStatus, type UserStatus } from "@/lib/constants";
 import type { MapMarker } from "@/components/LeafletMap";
+import { visibleEventSource } from "@/components/live/visibleEventSource";
 
 const LeafletMap = dynamic(() => import("@/components/LeafletMap"), { ssr: false });
 
@@ -36,6 +37,8 @@ type Partner = {
 
 const STALE_MS = 15 * 60 * 1000;
 
+type RiderPing = { id: string; location: [number, number] | null; at: string | null; isOnline: boolean; isAvailable: boolean; busy: boolean };
+
 function presence(p: Partner) {
   if (!p.delivery?.isOnline) return { key: "offline", label: "Offline", color: "#94a3b8" };
   if (p.delivery.activeOrder) return { key: "busy", label: "On delivery", color: "#ea580c" };
@@ -51,13 +54,65 @@ export default function DeliveryPartnersPage() {
   const { data, error, loading, reload } = useApi<{ items: Partner[] }>(`/api/admin/delivery-partners${qs({ q: dq, status, presence: presenceFilter })}`);
   useLiveRefresh(reload, ["user", "auth", "order"]);
 
-  // GPS pings don't create activity-log entries, so refresh positions on a timer as well.
+  // Every rider's GPS fix arrives live over /api/admin/riders/stream, so markers glide in real time.
+  const [pings, setPings] = useState<Record<string, RiderPing>>({});
+  const [liveMode, setLiveMode] = useState(false);
+  const known = useRef(new Map<string, string>()); // rider id -> presence seen in the list
+  const reloadRef = useRef(reload);
+  reloadRef.current = reload;
   useEffect(() => {
-    const t = setInterval(reload, 15000);
-    return () => clearInterval(t);
-  }, [reload]);
+    let pending: ReturnType<typeof setTimeout> | null = null;
+    const stop = visibleEventSource(
+      "/api/admin/riders/stream",
+      (es) => {
+        es.addEventListener("mode", () => {
+          setLiveMode(true);
+          reloadRef.current(); // (re)connected: catch up on anything missed while paused
+        });
+        es.addEventListener("rider", (e) => {
+          const p = JSON.parse((e as MessageEvent).data) as RiderPing;
+          setPings((cur) => ({ ...cur, [p.id]: p }));
+          // Someone new, or went online/offline/busy: refresh the list (counts, table), debounced.
+          const presenceKey = `${p.isOnline}|${p.isAvailable}|${p.busy}`;
+          if (known.current.get(p.id) !== presenceKey && !pending) {
+            pending = setTimeout(() => {
+              pending = null;
+              reloadRef.current();
+            }, 800);
+          }
+        });
+      },
+      { onDown: () => setLiveMode(false) }
+    );
+    const safety = setInterval(() => reloadRef.current(), 60000);
+    return () => {
+      stop();
+      if (pending) clearTimeout(pending);
+      clearInterval(safety);
+    };
+  }, []);
 
-  const items = useMemo(() => data?.items ?? [], [data]);
+  // The list is the source of truth for who exists; live pings override position and presence.
+  const items = useMemo(() => {
+    const list = data?.items ?? [];
+    return list.map((p) => {
+      const lp = pings[p._id];
+      if (!lp || (p.delivery?.lastLocationAt && lp.at && lp.at < p.delivery.lastLocationAt)) return p;
+      return {
+        ...p,
+        delivery: {
+          ...p.delivery,
+          isOnline: lp.isOnline,
+          isAvailable: lp.isAvailable,
+          ...(lp.location ? { currentLocation: { coordinates: lp.location } } : {}),
+          ...(lp.at ? { lastLocationAt: lp.at } : {}),
+        },
+      } as Partner;
+    });
+  }, [data, pings]);
+  useEffect(() => {
+    for (const p of data?.items ?? []) known.current.set(p._id, `${!!p.delivery?.isOnline}|${!!p.delivery?.isAvailable}|${!!p.delivery?.activeOrder}`);
+  }, [data]);
   const counts = useMemo(() => {
     const c = { total: items.length, online: 0, available: 0, busy: 0, pending: 0 };
     for (const p of items) {
@@ -77,7 +132,8 @@ export default function DeliveryPartnersPage() {
       const stale = !p.delivery?.lastLocationAt || Date.now() - new Date(p.delivery.lastLocationAt).getTime() > STALE_MS;
       return {
         id: p._id,
-        position: [lat, lng],
+        kind: "rider" as const,
+        position: [lat, lng] as [number, number],
         color: stale ? "#94a3b8" : pr.color,
         label: p.name,
         popup: `${pr.label}${p.delivery?.activeOrder ? ` · ${p.delivery.activeOrder.orderNumber}` : ""} · GPS ${timeAgo(p.delivery?.lastLocationAt)}`,
@@ -105,6 +161,7 @@ export default function DeliveryPartnersPage() {
             <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-green-600" /> Available</span>
             <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-orange-600" /> On delivery</span>
             <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-slate-400" /> Stale GPS</span>
+            {liveMode && <span className="flex items-center gap-1 font-semibold text-brand-700"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-500" /> LIVE</span>}
           </div>
         }
       >

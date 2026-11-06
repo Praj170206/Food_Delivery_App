@@ -7,7 +7,8 @@ import { adminOrderActionSchema } from "@/lib/validators";
 import { logActivity } from "@/lib/audit";
 import { sendMail, mailTemplates } from "@/lib/mail";
 import { releasePartner, reservePartner, timelineEntry } from "@/lib/orders";
-import { notifyAssignment, tryAutoAssign } from "@/lib/assignment";
+import { announceToNearbyRiders, notifyAssignment, tryAutoAssign } from "@/lib/assignment";
+import { getSettings } from "@/models/Setting";
 import { refundIfPaidOnline } from "@/lib/payments";
 import { orderAudience } from "@/lib/auth/access";
 import { ACTIVE_ORDER_STATUSES, ORDER_STATUS_LABELS, type OrderStatus } from "@/lib/constants";
@@ -74,13 +75,17 @@ export const PATCH = route<Params>(async (req, { params }) => {
           throw new ApiError(409, `${partner.name} is not available right now`);
         }
       }
-      if (previous) await releasePartner(previous);
-
       order.deliveryPartner = partner?._id;
       order.assignedAt = partner ? new Date() : undefined;
       const note = partner ? `Assigned to ${partner.name} by admin` : `Partner removed by admin${body.action === "unassign" && body.reason ? `: ${body.reason}` : ""}`;
       order.timeline.push(timelineEntry(partner ? "partner_assigned" : "partner_unassigned", admin, note));
-      await order.save();
+      try {
+        await order.save();
+      } catch (err) {
+        if (partner) await releasePartner(partner._id); // the order changed underneath us: don't leave the new rider stuck
+        throw err;
+      }
+      if (previous) await releasePartner(previous);
 
       await log(
         partner ? "order.partner_assigned" : "order.partner_unassigned",
@@ -108,6 +113,15 @@ export const PATCH = route<Params>(async (req, { params }) => {
       await order.save();
       if (body.status === "delivered") await releasePartner(order.deliveryPartner, true);
 
+      // Moved into a stage riders can take, with nobody assigned: find / alert a rider like the hotel flow does.
+      if (["confirmed", "preparing", "ready"].includes(body.status) && !order.deliveryPartner) {
+        const settings = await getSettings();
+        // `user` is populated here; the helpers only read the order's id, hotel, status and rider.
+        const plain = order as unknown as Parameters<typeof tryAutoAssign>[0];
+        const assigned = settings.delivery?.autoAssign ? await tryAutoAssign(plain, admin, req) : null;
+        if (!assigned) await announceToNearbyRiders(plain, req);
+      }
+
       // Overriding "delivered" skips the customer OTP check, so flag it loudly.
       await log(
         "order.status_override",
@@ -122,6 +136,7 @@ export const PATCH = route<Params>(async (req, { params }) => {
       if (order.payment?.status !== "paid") throw new ApiError(400, "Only paid orders can be refunded");
       if (order.payment.method === "cod" && order.status !== "delivered") throw new ApiError(400, "Nothing to refund for this COD order");
       if (order.payment.method === "online") {
+        if (isActive) throw new ApiError(400, "This order is still in progress. Cancel it instead - cancelling refunds the payment automatically.");
         // Real money back through Razorpay.
         const r = await refundIfPaidOnline(order._id, admin, body.note ?? "Refund issued by admin", req);
         if (!r.refunded) throw new ApiError(502, `Razorpay refund failed: ${r.error ?? "unknown error"}`);

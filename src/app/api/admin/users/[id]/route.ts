@@ -3,6 +3,7 @@ import { route, parseBody, ApiError, assertObjectId } from "@/lib/api";
 import { requireRole } from "@/lib/auth/session";
 import { User } from "@/models/User";
 import { Order } from "@/models/Order";
+import { Restaurant } from "@/models/Restaurant";
 import { ActivityLog } from "@/models/ActivityLog";
 import { adminUpdateUserSchema } from "@/lib/validators";
 import { logActivity } from "@/lib/audit";
@@ -87,6 +88,8 @@ export const PATCH = route<Params>(async (req, { params }) => {
 
   const changes: string[] = [];
   const prevStatus = user.status;
+  const prevRole = user.role;
+  const hotelId = user.restaurant;
 
   if (body.name && body.name !== user.name) {
     changes.push(`name → ${body.name}`);
@@ -102,6 +105,7 @@ export const PATCH = route<Params>(async (req, { params }) => {
     }
     changes.push(`role ${ROLE_LABELS[user.role]} → ${ROLE_LABELS[body.role]}`);
     user.role = body.role;
+    if (prevRole === "manager" && hotelId) user.restaurant = undefined; // no longer runs that hotel
     if (body.role === "delivery" && !user.delivery) {
       user.delivery = { vehicleType: "scooter", isOnline: false, isAvailable: false, totalDeliveries: 0, rating: 0 };
     }
@@ -133,6 +137,15 @@ export const PATCH = route<Params>(async (req, { params }) => {
 
   if (!changes.length) return NextResponse.json({ user: user.toJSON() });
   await user.save();
+
+  // A hotel whose manager can no longer sign in would keep taking orders nobody can accept: close it.
+  if (prevRole === "manager" && hotelId && (user.role !== "manager" || user.status !== "active")) {
+    await Restaurant.updateOne(
+      { _id: hotelId },
+      user.role !== "manager" ? { $set: { isOpen: false }, $unset: { manager: 1 } } : { $set: { isOpen: false } }
+    );
+    changes.push(user.role !== "manager" ? "unlinked from their hotel (hotel closed)" : "their hotel was closed");
+  }
 
   const statusChanged = prevStatus !== user.status;
   await logActivity({

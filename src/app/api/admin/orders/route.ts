@@ -3,10 +3,12 @@ import mongoose from "mongoose";
 import { route, pagination, escapeRegex } from "@/lib/api";
 import { requireRole } from "@/lib/auth/session";
 import { Order } from "@/models/Order";
+import { expireUnpaidOrders } from "@/lib/payments";
 import { ACTIVE_ORDER_STATUSES, ORDER_STATUSES, PAYMENT_METHODS } from "@/lib/constants";
 
 export const GET = route(async (req) => {
   await requireRole("admin");
+  await expireUnpaidOrders(); // abandoned online checkouts shouldn't sit in "Awaiting payment" forever
   const sp = req.nextUrl.searchParams;
   const { page, limit, skip } = pagination(req);
 

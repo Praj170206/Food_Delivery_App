@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Bike, History, LogOut, UserRound } from "lucide-react";
-import { api, useApi } from "@/lib/client";
+import { api, useApi, ClientApiError } from "@/lib/client";
 import { haversineKm } from "@/lib/geo";
 import { ToastProvider, cx, useToast } from "@/components/ui";
 import { LiveProvider, useLive } from "@/components/live/LiveProvider";
@@ -153,7 +153,13 @@ function RiderProvider({ children }: { children: ReactNode }) {
         try {
           const res = await api<{ assignedOrder: { orderNumber: string } | null }>("/api/delivery/location", { method: "POST", body: { coordinates: pos, accuracy: p.coords.accuracy } });
           if (res.assignedOrder) refresh();
-        } catch {}
+        } catch (err) {
+          // 409 = the server has us offline (e.g. GPS was silent for 15 min): sync the screen.
+          if (err instanceof ClientApiError && err.status === 409) {
+            toast("You were set offline because your location stopped updating. Go online again to get orders.", "error");
+            refresh();
+          }
+        }
       },
       (e) => setGpsError(gpsMessage(e)),
       { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }

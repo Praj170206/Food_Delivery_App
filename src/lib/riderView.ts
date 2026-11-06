@@ -7,7 +7,7 @@ type Loose = Record<string, any>; // eslint-disable-line @typescript-eslint/no-e
  * included while the order is active - once delivered/cancelled they're hidden again.
  */
 export function riderOrderView(o: Loose, riderCoords?: [number, number]) {
-  const active = ["confirmed", "preparing", "ready", "picked_up"].includes(o.status);
+  const active = ["placed", "confirmed", "preparing", "ready", "picked_up"].includes(o.status);
   const hotel = o.restaurant ?? {};
   const hotelCoords = hotel.location?.coordinates as [number, number] | undefined;
   const homeCoords = o.deliveryAddress?.location?.coordinates as [number, number] | undefined;

@@ -7,7 +7,7 @@ import { customerCancelSchema } from "@/lib/validators";
 import { customerOrderView } from "@/lib/customerView";
 import { releasePartner, timelineEntry } from "@/lib/orders";
 import { logActivity } from "@/lib/audit";
-import { refundIfPaidOnline } from "@/lib/payments";
+import { expireUnpaidOrders, refundIfPaidOnline } from "@/lib/payments";
 
 type Params = { id: string };
 
@@ -15,6 +15,7 @@ export const GET = route<Params>(async (_req, { params }) => {
   const user = await requireRole("user");
   const { id } = await params;
   assertObjectId(id);
+  await expireUnpaidOrders({ _id: id, user: user._id });
   const order = await Order.findById(id)
     .select("+deliveryOtpEnc")
     .populate("restaurant", "name slug phone address location")

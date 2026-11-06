@@ -10,6 +10,7 @@ import { formatDateTime, formatINR, timeAgo } from "@/lib/format";
 import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorBlock, Field, LoadingBlock, Modal, PageHeader, Select, Textarea, cx, useToast } from "@/components/ui";
 import { useLiveRefresh } from "@/components/live/LiveProvider";
 import { useOrderTracking } from "@/components/live/useOrderTracking";
+import { useRoadRoute } from "@/components/live/useRoadRoute";
 import { ACTIVE_ORDER_STATUSES, ORDER_STATUSES, ORDER_STATUS_LABELS, ROLE_LABELS, type OrderStatus, type Role } from "@/lib/constants";
 import type { MapMarker } from "@/components/LeafletMap";
 
@@ -169,9 +170,18 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
   const track = useOrderTracking(id, live, reload);
   useEffect(() => {
     if (!live) return;
-    const t = setInterval(reload, 10000);
+    const t = setInterval(reload, 30000); // safety net; positions arrive live over the tracking stream
     return () => clearInterval(t);
   }, [live, reload]);
+
+  // Road route for the rider's current leg (to the hotel, then to the customer).
+  const od = data?.order;
+  const toLatLng = (c?: [number, number]) => (c ? ([c[1], c[0]] as [number, number]) : null);
+  const rest = toLatLng(od?.restaurant.location?.coordinates);
+  const cust = toLatLng(od?.deliveryAddress.location?.coordinates);
+  const rider = toLatLng(track.location ?? od?.deliveryPartner?.delivery?.currentLocation?.coordinates);
+  const riderLive = !!(rider && live && od?.deliveryPartner);
+  const road = useRoadRoute(riderLive ? rider : rest, riderLive && od?.status !== "picked_up" ? rest : cust, live);
 
   if (loading) return <LoadingBlock />;
   if (error || !data) return <ErrorBlock message={error ?? "Not found"} onRetry={reload} />;
@@ -188,15 +198,12 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
     }
   };
 
-  const toLatLng = (c?: [number, number]) => (c ? ([c[1], c[0]] as [number, number]) : null);
-  const rest = toLatLng(o.restaurant.location?.coordinates);
-  const cust = toLatLng(o.deliveryAddress.location?.coordinates);
-  const rider = toLatLng(track.location ?? o.deliveryPartner?.delivery?.currentLocation?.coordinates);
   const markers: MapMarker[] = [
-    rest && { id: "r", position: rest, color: "#1f7a3a", label: `Hotel: ${o.restaurant.name}`, popup: o.restaurant.address.line1 },
-    cust && { id: "c", position: cust, color: "#2563eb", label: `Customer: ${o.user.name}`, popup: o.deliveryAddress.line1 },
-    rider && live && { id: "d", position: rider, color: "#ea580c", label: `Rider: ${o.deliveryPartner!.name}`, popup: `GPS ${timeAgo(track.lastLocationAt ?? o.deliveryPartner?.delivery?.lastLocationAt)}`, radius: 11 },
+    rest && { id: "r", kind: "hotel", position: rest, color: "#1f7a3a", label: `Hotel: ${o.restaurant.name}`, popup: o.restaurant.address.line1 },
+    cust && { id: "c", kind: "home", position: cust, color: "#2563eb", label: `Customer: ${o.user.name}`, popup: o.deliveryAddress.line1 },
+    riderLive && { id: "d", kind: "rider", position: rider!, color: "#ea580c", label: `Rider: ${o.deliveryPartner!.name}`, popup: `GPS ${timeAgo(track.lastLocationAt ?? o.deliveryPartner?.delivery?.lastLocationAt)}` },
   ].filter(Boolean) as MapMarker[];
+  const straight = rest && cust ? [rest, ...(riderLive ? [rider!] : []), cust] : undefined;
 
   const stepIndex = STEPS.indexOf(o.status);
   const canChangePartner = live && o.status !== "picked_up";
@@ -245,7 +252,17 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
           <Card title={live ? "Live tracking" : "Route"} bodyClassName="p-2">
-            {markers.length ? <LeafletMap markers={markers} route={rest && cust ? [rest, ...(rider && live ? [rider] : []), cust] : undefined} height={340} fitKey={o._id} /> : <EmptyState title="No location data" />}
+            {markers.length ? (
+              <div className="relative">
+                <LeafletMap markers={markers} route={road.path ?? straight} routeStyle={road.path ? "road" : "straight"} height={340} fitKey={`${o._id}-${o.status}`} followId={riderLive ? "d" : undefined} />
+                {riderLive && road.mins != null && (
+                  <div className="pointer-events-none absolute left-3 top-3 z-[400] rounded-xl bg-white/95 px-3 py-2 shadow-md ring-1 ring-slate-200">
+                    <p className="text-sm font-bold text-slate-900">{o.status === "picked_up" ? `Reaches customer in ~${road.mins} min` : `Reaches hotel in ~${road.mins} min`}</p>
+                    {road.km != null && <p className="text-[11px] text-slate-500">{road.km} km by road</p>}
+                  </div>
+                )}
+              </div>
+            ) : <EmptyState title="No location data" />}
             <div className="flex flex-wrap gap-4 px-2 pt-2 text-xs text-slate-500">
               <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-[#1f7a3a]" /> Hotel</span>
               <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-blue-600" /> Customer</span>

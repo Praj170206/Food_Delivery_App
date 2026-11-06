@@ -1,4 +1,9 @@
 export const ROLES = ["admin", "user", "delivery", "manager"] as const;
+
+/** Hard limit between hotel and customer. No setting can go beyond this. */
+export const MAX_DELIVERY_KM = 50;
+/** The admin's configured radius, never more than the hard limit. */
+export const deliveryRadiusKm = (configured?: number | null) => Math.min(configured || 10, MAX_DELIVERY_KM);
 export type Role = (typeof ROLES)[number];
 
 export const ROLE_LABELS: Record<Role, string> = {

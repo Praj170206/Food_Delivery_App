@@ -4,6 +4,8 @@ import { requireRole } from "@/lib/auth/session";
 import { User } from "@/models/User";
 import { Restaurant } from "@/models/Restaurant";
 import { Order } from "@/models/Order";
+import { expireUnpaidOrders } from "@/lib/payments";
+import { switchOffStaleRiders } from "@/lib/assignment";
 import { ACTIVE_ORDER_STATUSES } from "@/lib/constants";
 
 const TZ = process.env.APP_TIMEZONE || "Asia/Kolkata";
@@ -17,6 +19,8 @@ const toMap = (rows: { _id: string; count: number }[]) =>
 
 export const GET = route(async () => {
   await requireRole("admin");
+  await expireUnpaidOrders();
+  await switchOffStaleRiders();
 
   const since = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
   const [usersByRole, usersByStatus, pendingByRole, restaurantsByStatus, ordersByStatus, daily, activeOrders, partners, recentOrders, topRestaurants] =

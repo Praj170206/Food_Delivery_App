@@ -3,6 +3,7 @@ import { Restaurant } from "@/models/Restaurant";
 import { MenuItem } from "@/models/MenuItem";
 import { getSettings } from "@/models/Setting";
 import { haversineKm } from "@/lib/geo";
+import { deliveryRadiusKm } from "@/lib/constants";
 
 export type CartLine = { menuItemId: string; quantity: number };
 
@@ -47,7 +48,8 @@ export async function buildQuote(restaurantId: string, cart: CartLine[], dest: [
   if (!restaurant.isOpen) problems.push(`${restaurant.name} is closed right now`);
 
   const distanceKm = Math.round(haversineKm(restaurant.location!.coordinates as [number, number], dest) * 10) / 10;
-  if (distanceKm > d.maxDeliveryRadiusKm) problems.push(`This address is ${distanceKm} km away - ${restaurant.name} delivers up to ${d.maxDeliveryRadiusKm} km`);
+  const maxKm = deliveryRadiusKm(d.maxDeliveryRadiusKm); // never more than 50 km
+  if (distanceKm > maxKm) problems.push(`This address is ${distanceKm} km away - ${restaurant.name} delivers up to ${maxKm} km`);
 
   // Merge duplicate lines, then load real prices.
   const qty = new Map<string, number>();

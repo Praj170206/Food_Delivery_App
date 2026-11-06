@@ -11,8 +11,8 @@ const settingSchema = new Schema(
       baseFee: { type: Number, default: 25, min: 0 },
       perKmFee: { type: Number, default: 6, min: 0 },
       freeDeliveryAbove: { type: Number, default: 499, min: 0 },
-      maxDeliveryRadiusKm: { type: Number, default: 10, min: 1 },
-      assignmentRadiusKm: { type: Number, default: 5, min: 1 },
+      maxDeliveryRadiusKm: { type: Number, default: 10, min: 1, max: 50 }, // MAX_DELIVERY_KM
+      assignmentRadiusKm: { type: Number, default: 5, min: 1, max: 50 },
       autoAssign: { type: Boolean, default: true },
     },
     taxPercent: { type: Number, default: 5, min: 0, max: 50 },

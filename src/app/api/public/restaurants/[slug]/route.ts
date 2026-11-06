@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { deliveryRadiusKm } from "@/lib/constants";
 import { route, ApiError } from "@/lib/api";
 import { connectDB } from "@/lib/db";
 import { Restaurant } from "@/models/Restaurant";
@@ -32,7 +33,7 @@ export const GET = route<Params>(async (req, { params }) => {
     const km = Math.round(haversineKm(restaurant.location!.coordinates as [number, number], [lng, lat]) * 10) / 10;
     delivery = {
       distanceKm: km,
-      deliverable: km <= (s.delivery?.maxDeliveryRadiusKm ?? 10),
+      deliverable: km <= deliveryRadiusKm(s.delivery?.maxDeliveryRadiusKm),
       fee: Math.round((s.delivery?.baseFee ?? 0) + km * (s.delivery?.perKmFee ?? 0)),
       freeAbove: s.delivery?.freeDeliveryAbove ?? 0,
       etaMins: estimateMins(restaurant.avgPrepTimeMins, km),

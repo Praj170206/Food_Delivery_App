@@ -10,12 +10,36 @@ export function timelineEntry(status: string, actor: Actor | null, note?: string
 /** Frees a delivery partner after their order is delivered, cancelled or reassigned. */
 export async function releasePartner(partnerId: Types.ObjectId | string | null | undefined, delivered = false) {
   if (!partnerId) return;
-  const partner = await User.findById(partnerId);
-  if (!partner?.delivery) return;
-  partner.delivery.activeOrder = undefined;
-  partner.delivery.isAvailable = !!partner.delivery.isOnline && partner.status === "active";
-  if (delivered) partner.delivery.totalDeliveries = (partner.delivery.totalDeliveries ?? 0) + 1;
-  await partner.save();
+  // One atomic update (not read-modify-save), so it can't clobber a reservation made in between.
+  await User.updateOne({ _id: partnerId, delivery: { $exists: true } }, [
+    {
+      $set: {
+        "delivery.isAvailable": { $and: [{ $eq: ["$delivery.isOnline", true] }, { $eq: ["$status", "active"] }] },
+        ...(delivered ? { "delivery.totalDeliveries": { $add: [{ $ifNull: ["$delivery.totalDeliveries", 0] }, 1] } } : {}),
+      },
+    },
+    { $unset: "delivery.activeOrder" },
+  ]);
+}
+
+export const RIDER_GPS_STALE_MS = 15 * 60 * 1000;
+
+/**
+ * Riders who closed the app without going offline would show as "online" forever. Anyone free
+ * whose GPS has been silent for 15 minutes is switched offline (riders mid-delivery are left alone).
+ * Returns the riders that were switched off so callers can log / notify them.
+ */
+export async function expireStaleRiders() {
+  const filter = {
+    role: "delivery",
+    "delivery.isOnline": true,
+    "delivery.activeOrder": null, // null or missing
+    $or: [{ "delivery.lastLocationAt": { $lt: new Date(Date.now() - RIDER_GPS_STALE_MS) } }, { "delivery.lastLocationAt": { $exists: false } }],
+  };
+  const stale = await User.find(filter).select("_id name role").lean();
+  if (!stale.length) return [];
+  await User.updateMany({ ...filter, _id: { $in: stale.map((r) => r._id) } }, { $set: { "delivery.isOnline": false, "delivery.isAvailable": false } });
+  return stale;
 }
 
 export type PartnerCandidate = {
@@ -54,7 +78,7 @@ export async function findNearbyPartners(
       },
     },
     // Ignore partners whose GPS hasn't reported in 15 minutes - their position is stale.
-    { $match: { "delivery.lastLocationAt": { $gte: new Date(Date.now() - 15 * 60 * 1000) } } },
+    { $match: { "delivery.lastLocationAt": { $gte: new Date(Date.now() - RIDER_GPS_STALE_MS) } } },
     { $sort: { "delivery.isAvailable": -1, distanceMeters: 1 } },
     { $limit: opts.limit ?? 20 },
     {

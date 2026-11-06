@@ -11,6 +11,7 @@ import { formatDateTime, formatINR, timeAgo } from "@/lib/format";
 import { Badge, Button, Card, ConfirmDialog, ErrorBlock, LoadingBlock, cx, useToast } from "@/components/ui";
 import { useLiveRefresh } from "@/components/live/LiveProvider";
 import { useOrderTracking } from "@/components/live/useOrderTracking";
+import { useRoadRoute } from "@/components/live/useRoadRoute";
 import type { MapMarker } from "@/components/LeafletMap";
 import { ORDER_STATUS_LABELS, ROLE_LABELS, type OrderStatus, type Role } from "@/lib/constants";
 
@@ -72,6 +73,14 @@ export default function TrackOrderPage({ params }: { params: Promise<{ id: strin
   const active = !!data && !["delivered", "cancelled"].includes(data.order.status);
   // Rider position pushed live (moves on the map the moment the rider's phone reports it).
   const live = useOrderTracking(id, active, reload);
+
+  // Road route for the leg the rider is on now: to the kitchen before pickup, to you after.
+  const od = data?.order;
+  const ll = (c?: [number, number]) => (c ? ([c[1], c[0]] as [number, number]) : null);
+  const hotel = ll(od?.restaurant.location), home = ll(od?.deliveryAddress.location), rider = ll(live.location ?? od?.rider?.location);
+  const riderLive = !!(rider && active && od?.rider);
+  const legTo = riderLive ? (od!.status === "picked_up" ? home : hotel) : home;
+  const road = useRoadRoute(riderLive ? rider : hotel, legTo, active);
   // Status changes arrive instantly over the live stream; the rider's GPS position is refreshed every 10s.
   useEffect(() => {
     if (!active) return;
@@ -86,18 +95,21 @@ export default function TrackOrderPage({ params }: { params: Promise<{ id: strin
   if (error || !data) return <ErrorBlock message={error ?? "Order not found"} onRetry={reload} />;
   const o = data.order;
   const stepIdx = STEPS.findIndex((s) => s.status === o.status);
-  const ll = (c?: [number, number]) => (c ? ([c[1], c[0]] as [number, number]) : null);
-  const hotel = ll(o.restaurant.location), home = ll(o.deliveryAddress.location), rider = ll(live.location ?? o.rider?.location);
   const riderSeenAt = live.lastLocationAt ?? o.rider?.lastLocationAt;
 
   const markers: MapMarker[] = [];
-  if (hotel) markers.push({ id: "h", position: hotel, color: "#1f7a3a", label: o.restaurant.name });
-  if (home) markers.push({ id: "c", position: home, color: "#2563eb", label: "You", popup: o.deliveryAddress.line1 });
-  if (rider && active) markers.push({ id: "r", position: rider, color: "#ea580c", label: `${o.rider!.name} (rider)`, popup: `Updated ${timeAgo(riderSeenAt)}`, radius: 12 });
-  const routeLine = hotel && home ? (rider && active ? (o.status === "picked_up" ? [rider, home] : [rider, hotel, home]) : [hotel, home]) : undefined;
+  if (hotel) markers.push({ id: "h", kind: "hotel", position: hotel, color: "#1f7a3a", label: o.restaurant.name });
+  if (home) markers.push({ id: "c", kind: "home", position: home, color: "#2563eb", label: "You", popup: o.deliveryAddress.line1 });
+  if (riderLive) markers.push({ id: "r", kind: "rider", position: rider!, color: "#ea580c", label: `${o.rider!.name} (rider)`, popup: `Updated ${timeAgo(riderSeenAt)}` });
+  const straight = hotel && home ? (riderLive ? (o.status === "picked_up" ? [rider!, home] : [rider!, hotel, home]) : [hotel, home]) : undefined;
+  const routeLine = road.path ?? straight;
+  const etaText = road.mins == null ? null : riderLive ? (o.status === "picked_up" ? `Arriving in ~${road.mins} min` : `Rider reaches the kitchen in ~${road.mins} min`) : null;
 
   const [headline, HeadIcon] = HEADLINE[o.status];
-  const minsLeft = o.estimatedDeliveryAt ? Math.max(0, Math.round((new Date(o.estimatedDeliveryAt).getTime() - Date.now()) / 60000)) : null;
+  // Once the rider has the food, the live road ETA beats the estimate made at order time.
+  const liveEta = riderLive && o.status === "picked_up" && road.mins != null ? road.mins : null;
+  const minsLeft = liveEta ?? (o.estimatedDeliveryAt ? Math.max(0, Math.round((new Date(o.estimatedDeliveryAt).getTime() - Date.now()) / 60000)) : null);
+  const arriveBy = liveEta != null ? new Date(Date.now() + liveEta * 60000) : o.estimatedDeliveryAt ? new Date(o.estimatedDeliveryAt) : null;
 
   const payNow = async () => {
     setPaying(true);
@@ -144,7 +156,7 @@ export default function TrackOrderPage({ params }: { params: Promise<{ id: strin
               <h1 className="mt-1.5 font-display text-3xl font-semibold leading-tight sm:text-[34px]">{headline}</h1>
               {active && minsLeft !== null && (
                 <p className="mt-2 inline-flex items-center gap-2 text-sm text-brand-100/90">
-                  <Clock className="h-4 w-4" /> Arriving in <strong className="text-white">{minsLeft} min</strong> · by {new Date(o.estimatedDeliveryAt!).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                  <Clock className="h-4 w-4" /> Arriving in <strong className="text-white">{minsLeft} min</strong> · by {arriveBy?.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
                 </p>
               )}
               {o.status === "delivered" && o.deliveredAt && <p className="mt-2 text-sm text-brand-100/90">Delivered at {formatDateTime(o.deliveredAt)}</p>}
@@ -204,7 +216,15 @@ export default function TrackOrderPage({ params }: { params: Promise<{ id: strin
 
           {markers.length > 0 && (
             <Card title={active ? "Live tracking" : "Route"} bodyClassName="p-2">
-              <LeafletMap markers={markers} route={routeLine} height={340} fitKey={`${o._id}-${markers.length}`} />
+              <div className="relative">
+                <LeafletMap markers={markers} route={routeLine} routeStyle={road.path ? "road" : "straight"} height={340} fitKey={`${o._id}-${markers.length}-${o.status}`} followId={riderLive ? "r" : undefined} />
+                {etaText && (
+                  <div className="pointer-events-none absolute left-3 top-3 z-[400] rounded-xl bg-white/95 px-3 py-2 shadow-md ring-1 ring-slate-200">
+                    <p className="text-sm font-bold text-slate-900">{etaText}</p>
+                    {road.km != null && <p className="text-[11px] text-slate-500">{road.km} km by road</p>}
+                  </div>
+                )}
+              </div>
               <div className="flex flex-wrap gap-4 px-2 pt-2 text-xs text-slate-500">
                 <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-[#1f7a3a]" /> Kitchen</span>
                 <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-blue-600" /> You</span>

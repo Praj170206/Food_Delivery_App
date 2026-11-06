@@ -93,6 +93,7 @@ export async function markOrderPaid(gatewayOrderId: string, paymentId: string, s
         ...(channel ? { "payment.channel": channel } : {}),
       },
       $push: { timeline: timelineEntry("placed", null, `Paid online${channel ? ` via ${channel.toUpperCase()}` : ""} (Razorpay ${paymentId})`) },
+      $inc: { __v: 1 },
     },
     { new: true }
   );
@@ -159,6 +160,7 @@ export async function expireUnpaidOrders(filter: Record<string, unknown> = {}) {
     {
       $set: { status: "cancelled", "payment.status": "failed", cancellation: { reason: "Payment was not completed in time", byRole: "system", at } },
       $push: { timeline: { status: "cancelled", note: "Payment was not completed within 30 minutes", byRole: "system", at } },
+      $inc: { __v: 1 },
     }
   );
 }

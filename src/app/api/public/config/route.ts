@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { deliveryRadiusKm } from "@/lib/constants";
 import { route } from "@/lib/api";
 import { connectDB } from "@/lib/db";
 import { getSettings } from "@/models/Setting";
@@ -15,7 +16,7 @@ export const GET = route(async () => {
     maintenanceMode: s.maintenanceMode,
     minOrderValue: s.minOrderValue,
     taxPercent: s.taxPercent,
-    delivery: { baseFee: s.delivery?.baseFee, perKmFee: s.delivery?.perKmFee, freeDeliveryAbove: s.delivery?.freeDeliveryAbove, maxDeliveryRadiusKm: s.delivery?.maxDeliveryRadiusKm },
+    delivery: { baseFee: s.delivery?.baseFee, perKmFee: s.delivery?.perKmFee, freeDeliveryAbove: s.delivery?.freeDeliveryAbove, maxDeliveryRadiusKm: deliveryRadiusKm(s.delivery?.maxDeliveryRadiusKm) },
     payments: {
       cod: !!s.payments?.cod,
       // Razorpay Checkout (UPI, cards, wallets, netbanking) - live only when enabled AND keys are set.

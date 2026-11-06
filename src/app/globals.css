@@ -114,6 +114,89 @@ body {
   box-shadow: var(--shadow-lg);
 }
 
+/* Live map markers (LeafletMap). */
+.gb-marker {
+  background: none;
+  border: 0;
+}
+.gb-rider {
+  position: relative;
+  width: 46px;
+  height: 46px;
+}
+.gb-rider-pulse {
+  position: absolute;
+  inset: 5px;
+  border-radius: 9999px;
+  background: var(--c);
+  opacity: 0.35;
+  animation: gb-pulse 1.8s ease-out infinite;
+}
+.gb-rider-heading {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: transform 0.6s ease, opacity 0.3s;
+}
+.gb-rider-heading i {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  margin-left: -6px;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-bottom: 9px solid var(--c);
+}
+.gb-rider-body {
+  position: absolute;
+  inset: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: var(--c);
+  color: #fff;
+  border: 3px solid #fff;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.28);
+}
+.gb-pin {
+  width: 36px;
+  height: 44px;
+  display: flex;
+  justify-content: center;
+}
+.gb-pin-head {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: var(--c);
+  border: 3px solid #fff;
+  box-shadow: 0 4px 10px rgb(0 0 0 / 0.25);
+  color: #fff;
+}
+.gb-pin-head svg {
+  transform: rotate(45deg);
+}
+@keyframes gb-pulse {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.45;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gb-rider-pulse {
+    animation: none;
+  }
+}
+
 .scrollbar-thin::-webkit-scrollbar {
   width: 6px;
   height: 6px;

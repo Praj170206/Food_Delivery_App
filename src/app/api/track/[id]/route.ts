@@ -123,6 +123,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
       send("order", { status: state.status, riderId: state.riderId });
       void loadRider();
+      // Already delivered / cancelled when opened: send the final state and close instead of idling.
+      if (!isLive(state.status) && state.status !== "payment_pending") setTimeout(() => cleanup(), 1000);
 
       const heartbeat = setInterval(() => {
         try {

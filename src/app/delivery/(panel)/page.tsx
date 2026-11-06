@@ -10,6 +10,7 @@ import { VegMark } from "@/components/brand";
 import { useRider, type RiderOrder } from "@/components/rider/RiderShell";
 import { NearbyOrders } from "@/components/rider/NearbyOrders";
 import type { MapMarker } from "@/components/LeafletMap";
+import { useRoadRoute } from "@/components/live/useRoadRoute";
 
 const LeafletMap = dynamic(() => import("@/components/LeafletMap"), { ssr: false });
 
@@ -71,10 +72,11 @@ function ActiveTask({ order }: { order: RiderOrder }) {
   const ll = (c?: [number, number]) => (c ? ([c[1], c[0]] as [number, number]) : null);
   const me = ll(position ?? undefined), hotel = ll(order.hotel.location), home = ll(order.customer.location);
   const markers: MapMarker[] = [];
-  if (hotel) markers.push({ id: "h", position: hotel, color: "#1f7a3a", label: order.hotel.name });
-  if (home && pickedUp) markers.push({ id: "c", position: home, color: "#2563eb", label: `Customer: ${order.customer.name}` });
-  if (me) markers.push({ id: "me", position: me, color: "#ea580c", label: "You", radius: 11 });
+  if (hotel) markers.push({ id: "h", kind: "hotel", position: hotel, color: "#1f7a3a", label: order.hotel.name });
+  if (home && pickedUp) markers.push({ id: "c", kind: "home", position: home, color: "#2563eb", label: `Customer: ${order.customer.name}` });
+  if (me) markers.push({ id: "me", kind: "rider", position: me, color: "#ea580c", label: "You" });
   const target = pickedUp ? home : hotel;
+  const road = useRoadRoute(me, target, true);
 
   const pickup = async () => {
     setBusy(true);
@@ -121,7 +123,14 @@ function ActiveTask({ order }: { order: RiderOrder }) {
 
       {markers.length > 0 && (
         <div className="overflow-hidden rounded-3xl shadow-sm ring-1 ring-slate-200/70">
-          <LeafletMap markers={markers} route={me && target ? [me, target] : undefined} height={230} fitKey={`${order._id}-${order.status}-${me ? 1 : 0}`} />
+          <div className="relative">
+            <LeafletMap markers={markers} route={road.path ?? (me && target ? [me, target] : undefined)} routeStyle={road.path ? "road" : "straight"} height={230} fitKey={`${order._id}-${order.status}-${me ? 1 : 0}`} followId={me ? "me" : undefined} />
+            {road.mins != null && (
+              <div className="pointer-events-none absolute left-3 top-3 z-[400] rounded-xl bg-white/95 px-3 py-1.5 text-xs font-bold text-slate-900 shadow-md ring-1 ring-slate-200">
+                {road.mins} min · {road.km} km to {pickedUp ? "customer" : "hotel"}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

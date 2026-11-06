@@ -9,6 +9,7 @@ import { formatDateTime, formatINR } from "@/lib/format";
 import { Badge, Card, ErrorBlock, LoadingBlock, PageHeader, cx } from "@/components/ui";
 import { useLiveRefresh } from "@/components/live/LiveProvider";
 import { useOrderTracking } from "@/components/live/useOrderTracking";
+import { useRoadRoute } from "@/components/live/useRoadRoute";
 import { useHotel } from "@/components/manager/ManagerShell";
 import { EVENT_LABELS, OrderActions, RiderInfo, type ManagerOrder } from "@/components/manager/orderParts";
 import type { MapMarker } from "@/components/LeafletMap";
@@ -26,18 +27,26 @@ export default function ManagerOrderDetail({ params }: { params: Promise<{ id: s
   const track = useOrderTracking(id, active, reload);
   useEffect(() => {
     if (!active) return;
-    const t = setInterval(reload, 10000); // rider position
+    const t = setInterval(reload, 30000); // safety net; the rider's position arrives live over the tracking stream
     return () => clearInterval(t);
   }, [active, reload]);
+
+  // Rider heading to the hotel: show the road route and when they'll arrive.
+  const od = data?.order;
+  const hotelLL = data?.hotel.location ? ([data.hotel.location[1], data.hotel.location[0]] as [number, number]) : null;
+  const riderRaw = track.location ?? od?.rider?.location;
+  const riderLL = riderRaw && od?.rider && active ? ([riderRaw[1], riderRaw[0]] as [number, number]) : null;
+  const comingToHotel = !!riderLL && od?.status !== "picked_up";
+  const road = useRoadRoute(riderLL, hotelLL, comingToHotel);
 
   if (loading) return <LoadingBlock />;
   if (error || !data) return <ErrorBlock message={error ?? "Not found"} onRetry={reload} />;
   const { order: o, hotel } = data;
 
   const markers: MapMarker[] = [];
-  if (hotel.location) markers.push({ id: "h", position: [hotel.location[1], hotel.location[0]], color: "#1f7a3a", label: hotel.name });
-  const riderAt = track.location ?? o.rider?.location;
-  if (riderAt && o.rider && active) markers.push({ id: "r", position: [riderAt[1], riderAt[0]], color: "#ea580c", label: `Rider: ${o.rider.name}`, radius: 11 });
+  if (hotelLL) markers.push({ id: "h", kind: "hotel", position: hotelLL, color: "#1f7a3a", label: hotel.name });
+  if (riderLL && o.rider) markers.push({ id: "r", kind: "rider", position: riderLL, color: "#ea580c", label: `Rider: ${o.rider.name}`, popup: o.status === "picked_up" ? "On the way to the customer" : "Coming to your hotel" });
+  const route = comingToHotel && hotelLL ? road.path ?? [riderLL!, hotelLL] : undefined;
 
   return (
     <>
@@ -71,8 +80,18 @@ export default function ManagerOrderDetail({ params }: { params: Promise<{ id: s
             {o.notes && <p className="border-t border-slate-100 bg-amber-50 px-4 py-3 text-sm text-amber-900">Customer note: {o.notes}</p>}
           </Card>
           {markers.length > 0 && (
-            <Card title={o.rider ? "Rider location" : "Hotel"} bodyClassName="p-2">
-              <LeafletMap markers={markers} height={300} fitKey={`${o._id}-${markers.length}`} />
+            <Card title={riderLL ? "Rider live location" : "Hotel"} bodyClassName="p-2">
+              <div className="relative">
+                <LeafletMap markers={markers} route={route} routeStyle={road.path ? "road" : "straight"} height={300} fitKey={`${o._id}-${markers.length}-${o.status}`} followId={riderLL ? "r" : undefined} />
+                {riderLL && (
+                  <div className="pointer-events-none absolute left-3 top-3 z-[400] rounded-xl bg-white/95 px-3 py-2 shadow-md ring-1 ring-slate-200">
+                    <p className="text-sm font-bold text-slate-900">
+                      {o.status === "picked_up" ? "Out for delivery" : road.mins != null ? `Rider reaches you in ~${road.mins} min` : "Rider is on the way"}
+                    </p>
+                    {comingToHotel && road.km != null && <p className="text-[11px] text-slate-500">{road.km} km by road</p>}
+                  </div>
+                )}
+              </div>
             </Card>
           )}
         </div>
